@@ -1,86 +1,143 @@
 import streamlit as st
 import pandas as pd
+import folium
+from streamlit_folium import st_folium
 from fpdf import FPDF
 
-# Load dataset of destinations
+st.set_page_config(page_title="AI Cultural Tourism Platform", layout="wide")
+
+# -----------------------------
+# Load Dataset
+# -----------------------------
 @st.cache_data
 def load_data():
-    return pd.read_csv("tourism_dataset_clean_streamlit.csv")
+    df = pd.read_csv("tourism_dataset_clean_streamlit.csv")
+    return df
 
 df = load_data()
 
-st.set_page_config(page_title="Cultural Tourism Platform", layout="wide")
+st.title("🌍 AI Cultural Tourism Insights Platform")
 
-# Create tabs layout (no video tab)
-tab1, tab2, tab3, tab4 = st.tabs(["Traveler Info", "Recommendations", "Itinerary", "Chatbot"])
+# -----------------------------
+# Traveler Input
+# -----------------------------
+st.sidebar.header("Traveler Preferences")
 
-# --- Traveler Info Tab ---
-with tab1:
-    st.header("Traveler Information")
-    name = st.text_input("Name")
-    age = st.number_input("Age", min_value=0, max_value=120, value=30)
-    interests = st.multiselect(
-        "Select your interests:",
-        ["Culture", "Nature", "Art & Architecture", "History", "Beaches", "Nightlife", "Cuisine", "Wellness"]
+interest = st.sidebar.selectbox(
+    "Select Travel Interest",
+    ["culture", "adventure", "nature", "beaches"]
+)
+
+season = st.sidebar.selectbox(
+    "Preferred Season",
+    df["Best Season"].dropna().unique()
+)
+
+budget = st.sidebar.selectbox(
+    "Budget Level",
+    df["budget_level"].dropna().unique()
+)
+
+duration = st.sidebar.slider("Trip Duration (Days)", 1, 7, 3)
+
+# -----------------------------
+# Recommendation Engine
+# -----------------------------
+filtered = df[
+    (df["Best Season"] == season) &
+    (df["budget_level"] == budget)
+]
+
+filtered = filtered.sort_values(by=[interest, "Tourist Rating"], ascending=False)
+
+recommendations = filtered.head(duration)
+
+# -----------------------------
+# Display Recommendations
+# -----------------------------
+st.header("Recommended Destinations")
+
+for _, row in recommendations.iterrows():
+
+    st.subheader(f"{row['Site Name']} — {row['city']}, {row['country']}")
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.write("Experience Type:", row["Type"])
+        st.write("Tourist Rating:", row["Tourist Rating"])
+        st.write("Best Season:", row["Best Season"])
+
+    with col2:
+        st.write("Budget Level:", row["budget_level"])
+        st.write("Average Cost:", row["avg_cost_usd"], "USD")
+        st.write("Climate:", row["climate_classification"])
+
+# -----------------------------
+# Map Visualization
+# -----------------------------
+st.header("Destination Map")
+
+# create base map
+m = folium.Map(location=[20,0], zoom_start=2)
+
+for _, row in recommendations.iterrows():
+
+    # simple random location fallback if lat/long not available
+    lat = row.get("latitude", None)
+    lon = row.get("longitude", None)
+
+    if pd.notna(lat) and pd.notna(lon):
+
+        folium.Marker(
+            [lat, lon],
+            tooltip=row["Site Name"],
+            popup=row["city"]
+        ).add_to(m)
+
+st_folium(m, width=700)
+
+# -----------------------------
+# Itinerary Generator
+# -----------------------------
+st.header("Generated Travel Itinerary")
+
+itinerary_text = []
+
+for i, (_, row) in enumerate(recommendations.iterrows()):
+
+    day_plan = f"Day {i+1}: Visit {row['Site Name']} in {row['city']}, {row['country']}"
+
+    st.write(day_plan)
+
+    itinerary_text.append(day_plan)
+
+# -----------------------------
+# PDF Generator
+# -----------------------------
+def create_pdf(text_list):
+
+    pdf = FPDF()
+    pdf.add_page()
+
+    pdf.set_font("Arial", size=12)
+
+    pdf.cell(200,10,txt="AI Generated Travel Itinerary",ln=True)
+
+    for line in text_list:
+        pdf.cell(200,10,txt=line,ln=True)
+
+    return pdf.output(dest="S").encode("latin-1")
+
+st.header("Download Itinerary")
+
+if st.button("Generate PDF"):
+
+    pdf_data = create_pdf(itinerary_text)
+
+    st.download_button(
+        label="Download Itinerary PDF",
+        data=pdf_data,
+        file_name="travel_itinerary.pdf",
+        mime="application/pdf"
     )
-    budget = st.number_input("Budget (USD)", min_value=0, value=5000)
-
-# Placeholder for recommendations
-recommended = None
-
-# --- Recommendations Tab ---
-with tab2:
-    st.header("Destination Recommendations")
-    if interests:
-        # Choose category based on interests (simple logic)
-        category = "nature" if "Nature" in interests else "culture"
-        # Filter by budget
-        candidates = df[df['avg_cost_usd'] <= budget] if budget else df
-        # Sort by category score and take top 3
-        recommended = candidates.sort_values(by=category, ascending=False).head(3)
-        if not recommended.empty:
-            st.subheader("Based on your interests, we recommend:")
-            for _, row in recommended.iterrows():
-                st.write(f"- **{row['Site Name']}** ({row['city']}, {row['country']}) – Score: {row['overall_experience_score']}")
-        else:
-            st.write("No destinations found matching your criteria.")
-    else:
-        st.write("Please select at least one interest to get recommendations.")
-
-# --- Itinerary Tab ---
-with tab3:
-    st.header("Itinerary")
-    if recommended is not None and not recommended.empty:
-        st.subheader("Your trip itinerary:")
-        for i, (_, row) in enumerate(recommended.iterrows(), start=1):
-            st.write(f"Day {i}: Visit **{row['Site Name']}** in {row['city']}, {row['country']} (Rating: {row['overall_experience_score']})")
-        # Generate PDF with PyFPDF
-        pdf = FPDF()
-        pdf.add_page()
-        pdf.set_font("Arial", size=12)
-        for i, (_, row) in enumerate(recommended.iterrows(), start=1):
-            text = f"Day {i}: Visit {row['Site Name']} in {row['city']}, {row['country']}."
-            pdf.cell(0, 10, txt=text, ln=1)
-        pdf_bytes = pdf.output(dest='S').encode('latin-1')  # use dest='S' for bytes:contentReference[oaicite:10]{index=10}
-        st.download_button(
-            label="Download Itinerary (PDF)",
-            data=pdf_bytes,
-            file_name="itinerary.pdf",
-            mime="application/pdf"
-        )
-    else:
-        st.write("Generate recommendations first to see the itinerary.")
-
-# --- Chatbot Tab ---
-with tab4:
-    st.header("Multilingual Chatbot")
-    st.write("Enter a message and select a language for a placeholder response.")
-    lang = st.selectbox("Language", ["English", "Spanish", "French", "German", "Italian"])
-    user_msg = st.chat_input("Your message:")
-    if user_msg:
-        with st.chat_message("user"):
-            st.write(user_msg)
-        # Placeholder response: echo user message with language note
-        response = f"[In {lang}] Echo: {user_msg}"
-        with st.chat_message("assistant"):
-            st.write(response)  # This uses st.chat_input and st.chat_message as in docs:contentReference[oaicite:11]{index=11}
