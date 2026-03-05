@@ -1,0 +1,9 @@
+pandas
+numpy
+scikit-learn
+sentence-transformers
+streamlit
+plotly
+moviepy
+reportlab
+opencv-python
